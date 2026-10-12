@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Плеяда</title>
+<link rel="icon" href="logo.svg">
+<link rel="stylesheet" href="style.css">
+<script>
+  // Тема применяется до первой отрисовки, чтобы не было вспышки.
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('pl.theme'); } catch (e) {}
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = t;
+  })();
+</script>
+</head>
+<body>
+
+<!-- ============ Доска ============ -->
+<main id="board" hidden>
+  <div id="viewport">
+    <div id="world">
+      <div id="els"></div>
+      <svg id="arrows" width="1" height="1"><g id="arrow-list"></g><path id="arrow-draft" class="draft" hidden /></svg>
+      <div id="cursors"></div>
+    </div>
+    <div id="marquee" hidden></div>
+    <div id="empty-hint" hidden>
+      <b>Здесь пока пусто</b>
+      <span>Дважды щёлкните по холсту, чтобы добавить заметку, или начните с шаблона</span>
+    </div>
+  </div>
+
+  <header class="float bar" id="bar-left">
+    <button class="ib" id="btn-home" data-icon="home" data-tip="Все проекты"></button>
+    <input id="project-name" spellcheck="false" maxlength="120" aria-label="Название проекта">
+    <nav id="crumbs"></nav>
+  </header>
+
+  <div class="float bar" id="bar-right">
+    <div id="peers"></div>
+    <div id="status" data-state="off"><i></i><span></span></div>
+    <button class="btn primary" id="btn-share"><span data-icon="users"></span>Поделиться</button>
+    <button class="ib" id="btn-theme" data-tip="Тема"></button>
+    <button class="ib" id="btn-menu" data-icon="more" data-tip="Меню"></button>
+  </div>
+
+  <nav class="float" id="dock">
+    <button class="ib" data-tool="select" data-icon="cursor" data-tip="Выделение · V"></button>
+    <button class="ib" data-tool="hand" data-icon="hand" data-tip="Рука · H или пробел"></button>
+    <hr>
+    <button class="ib" data-tool="note" data-icon="note" data-tip="Стикер-заметка · N"></button>
+    <button class="ib" data-tool="card" data-icon="card" data-tip="Карточка · C"></button>
+    <button class="ib" data-tool="text" data-icon="text" data-tip="Текст · T"></button>
+    <button class="ib" data-tool="arrow" data-icon="arrow" data-tip="Стрелка · A"></button>
+    <button class="ib" data-tool="frame" data-icon="frame" data-tip="Группа · G"></button>
+    <button class="ib" data-tool="board" data-icon="board" data-tip="Вложенная доска · B"></button>
+    <hr>
+    <button class="ib" data-act="image" data-icon="image" data-tip="Картинка"></button>
+    <button class="ib" data-act="link" data-icon="link" data-tip="Ссылка"></button>
+    <button class="ib" data-act="file" data-icon="file" data-tip="Файл"></button>
+    <hr>
+    <button class="ib" data-act="stickers" data-icon="smile" data-tip="Стикеры"></button>
+    <button class="ib" data-act="templates" data-icon="template" data-tip="Шаблоны"></button>
+  </nav>
+
+  <div class="float bar" id="zoom">
+    <button class="ib" id="btn-undo" data-icon="undo" data-tip="Отменить · Ctrl+Z"></button>
+    <button class="ib" id="btn-redo" data-icon="redo" data-tip="Вернуть · Ctrl+Y"></button>
+    <hr>
+    <button class="ib" id="zoom-out" data-icon="minus" data-tip="Отдалить"></button>
+    <button id="zoom-val" data-tip="Сбросить до 100%">100%</button>
+    <button class="ib" id="zoom-in" data-icon="plus" data-tip="Приблизить"></button>
+    <button class="ib" id="zoom-fit" data-icon="fit" data-tip="Показать всё · Ctrl+0"></button>
+  </div>
+
+  <div class="float bar" id="selbar" hidden></div>
+  <div class="float pop" id="pop" hidden></div>
+</main>
+
+<!-- ============ Список проектов ============ -->
+<section id="home" hidden>
+  <div class="home-in">
+    <header>
+      <div class="brand"><img src="logo.svg" alt=""><div><h1>Плеяда</h1><p>Бесконечные доски для творческих проектов</p></div></div>
+      <button class="ib" id="home-theme" data-tip="Тема"></button>
+    </header>
+    <div class="home-actions">
+      <button class="btn primary" id="home-new"><span data-icon="plus"></span>Новый проект</button>
+      <button class="btn" id="home-join"><span data-icon="users"></span>Открыть по ссылке</button>
+      <button class="btn" id="home-import"><span data-icon="upload"></span>Импорт из файла</button>
+    </div>
+    <div id="projects"></div>
+  </div>
+</section>
+
+<div id="modals"></div>
+<div id="toasts"></div>
+<input type="file" id="file-any" hidden multiple>
+<input type="file" id="file-img" hidden multiple accept="image/*">
+<input type="file" id="file-sticker" hidden accept="image/png,image/webp,image/gif,image/jpeg">
+<input type="file" id="file-import" hidden accept=".json,application/json">
+
+<script src="templates.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
