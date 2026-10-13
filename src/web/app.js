@@ -129,6 +129,13 @@ const me = { name: store.get('name', null) || HOST?.user || 'Гость', color:
 const P = { server: ORIGIN, id: null, name: '' };   // открытый проект
 const isLocalServer = s => s === ORIGIN && !!HOST;
 
+// Сервер с учётными записями: вход, команды и проекты внутри команд (см. account.js).
+let ACC = false;
+const SCREENS = ['board', 'home', 'auth', 'acc'];
+function showScreen(id) { for (const s of SCREENS) $('#' + s).hidden = s !== id; }
+async function newProjectId(name) { return ACC ? accCreateProject(name) : uid(14); }
+function launchProject(id, name, opts) { ACC ? accOpen(id, opts) : openProject({ server: ORIGIN, id, name }, opts); }
+
 // ============================================================
 //  Хранилище элементов и синхронизация
 // ============================================================
@@ -195,6 +202,7 @@ function connect() {
     S.online = false; S.peers.clear();
     drawPeers(); drawStatus();
     wsTimer = setTimeout(connect, Math.min(5000, 700 * 2 ** retry++));
+    if (ACC && retry === 2) accCheckAccess();
   };
 }
 function disconnect() {
@@ -1211,7 +1219,7 @@ function openProject(p, opts = {}) {
   undoStack.length = redoStack.length = 0; tx = null; syncHistoryButtons();
   Object.assign(V, { board: 'root', x: innerWidth / 2, y: innerHeight / 2, k: 1, sel: new Set(), edit: null });
   V.views.clear();
-  $('#home').hidden = true; $('#board').hidden = false;
+  showScreen('board');
   $('#modals').replaceChildren();
   closePop(); setTool('select'); setProjectName(P.name, false); buildSelbar();
   drawPeers(); drawStatus(); applyView(); invalidateAll();
@@ -1229,7 +1237,8 @@ function openProject(p, opts = {}) {
 async function showHome() {
   disconnect();
   P.id = null;
-  $('#board').hidden = true; $('#home').hidden = false;
+  if (ACC) return accHome();
+  showScreen('home');
   $('#modals').replaceChildren();
   document.title = 'Плеяда';
   history.replaceState(null, '', '#');
@@ -1275,7 +1284,7 @@ async function showHome() {
 }
 
 function newProjectDialog() {
-  let chosen = null;
+  let chosen = null, busy = false;
   const name = h('input', { type: 'text', value: 'Новый проект', maxlength: '120' });
   const options = [{ id: '', name: 'Пустая доска', desc: 'Начать с чистого листа', icon: 'plus' }, ...TEMPLATES];
   const grid = h('div', { class: 'tpl-grid' }, options.map((t, i) => {
@@ -1283,7 +1292,13 @@ function newProjectDialog() {
       h('div', { class: 'badge', icon: t.icon }), h('div', null, h('b', null, t.name), h('small', null, t.desc)));
     return b;
   }));
-  const create = () => openProject({ server: ORIGIN, id: uid(14), name: name.value.trim() || 'Новый проект' }, { template: chosen });
+  const create = async () => {
+    if (busy) return;
+    busy = true;
+    const title = name.value.trim() || 'Новый проект';
+    try { launchProject(await newProjectId(title), title, { template: chosen }); m.close(); }
+    catch (err) { toast(err.message, 4000); busy = false; }
+  };
   name.addEventListener('keydown', e => { if (e.key === 'Enter') create(); });
   const m = openModal(h('h2', null, 'Новый проект'), h('label', null, 'Название'), name, h('label', null, 'С чего начать'), grid,
     h('div', { class: 'actions' }, h('button', { class: 'btn ghost', onclick: () => m.close() }, 'Отмена'), h('button', { class: 'btn primary', onclick: create }, 'Создать')));
@@ -1331,9 +1346,11 @@ async function exportFile() {
 }
 async function importFile(file) {
   try {
-    const data = JSON.parse(await file.text()), id = uid(14);
-    const els = await importData(data, ORIGIN, id);
-    openProject({ server: ORIGIN, id, name: data.name || file.name.replace(/\.pleiada\.json$|\.json$/i, '') }, { els });
+    const data = JSON.parse(await file.text());
+    if (data?.app !== 'pleiada') throw new Error('Это не файл проекта «Плеяды»');
+    const name = String(data.name || file.name.replace(/\.pleiada\.json$|\.json$/i, '')).slice(0, 120) || 'Импорт';
+    const id = await newProjectId(name);
+    launchProject(id, name, { els: await importData(data, ORIGIN, id) });
   } catch (err) { toast('Не удалось импортировать: ' + err.message, 4000); }
 }
 async function publishTo(input) {
@@ -1344,6 +1361,7 @@ async function publishTo(input) {
   let info;
   try { info = await (await fetch(server + '/api/info')).json(); } catch { throw new Error('Сервер не отвечает'); }
   if (info?.app !== 'pleiada') throw new Error('По этому адресу нет сервера «Плеяды»');
+  if (info.accounts) throw new Error('Этот сервер требует входа. Экспортируйте проект в файл и импортируйте его в команду в веб-версии');
   const id = uid(14), els = await importData(await exportData(), server, id);
   openProject({ server, id, name: P.name }, { els });
   toast('Проект опубликован — поделитесь ссылкой');
@@ -1362,6 +1380,7 @@ function copyRow(text) {
   } }, 'Копировать'));
 }
 function shareDialog() {
+  if (ACC) return accShare();
   const name = h('input', { type: 'text', value: me.name, maxlength: '40' });
   name.addEventListener('change', () => {
     me.name = name.value.trim() || 'Гость';
@@ -1434,7 +1453,7 @@ $('#zoom-in').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, V.k * 1.25
 $('#zoom-out').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, V.k / 1.25);
 $('#zoom-val').onclick = () => zoomAt(innerWidth / 2, innerHeight / 2, 1);
 $('#zoom-fit').onclick = fitAll;
-$('#home-new').onclick = newProjectDialog;
+$('#home-new').onclick = () => newProjectDialog();
 $('#home-join').onclick = joinDialog;
 $('#home-import').onclick = () => $('#file-import').click();
 
@@ -1472,6 +1491,7 @@ addEventListener('resize', applyView);
 addEventListener('hashchange', route);
 
 function route() {
+  if (ACC) return accRoute();
   const id = new URLSearchParams(location.hash.slice(1)).get('b');
   if (id && /^[A-Za-z0-9_-]{6,40}$/.test(id)) { if (id !== P.id) openProject({ server: ORIGIN, id }); }
   else if (P.id == null || P.server === ORIGIN) showHome();
@@ -1479,4 +1499,11 @@ function route() {
 
 setTheme(document.documentElement.dataset.theme);
 syncHistoryButtons();
-route();
+
+async function boot() {
+  if (!HOST) {
+    try { ACC = !!(await (await fetch('/api/info')).json()).accounts; } catch { /* сервер без учётных записей */ }
+  }
+  route();
+}
+boot();

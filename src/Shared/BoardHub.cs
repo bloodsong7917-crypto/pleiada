@@ -62,6 +62,39 @@ public sealed class BoardHub : IDisposable
 
     public string AdminToken { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
 
+    /// <summary>Если задано — доска и её файлы доступны только тем, кого пропустит проверка (учётные записи).</summary>
+    public Func<HttpContext, string, bool> Authorize { get; set; }
+
+    /// <summary>Имя участника из учётной записи вместо присланного клиентом.</summary>
+    public Func<HttpContext, string> PeerName { get; set; }
+
+    bool Allowed(HttpContext ctx, string room) => Authorize == null || Authorize(ctx, room);
+
+    public (string Name, DateTime Updated, int Count) Describe(string id)
+    {
+        var r = GetRoom(id);
+        lock (r.Gate) return (r.Name, r.Updated, r.Els.Count);
+    }
+
+    public void Rename(string id, string name)
+    {
+        var r = GetRoom(id);
+        lock (r.Gate) { r.Name = Clip(name, 120); Touch(r); }
+        Broadcast(r, null, $"{{\"t\":\"meta\",\"name\":{JsonSerializer.Serialize(r.Name, Json)}}}");
+    }
+
+    public void Delete(string id)
+    {
+        if (!IdRx.IsMatch(id)) return;
+        if (_rooms.TryRemove(id, out var r))
+        {
+            Peer[] peers;
+            lock (r.Gate) { peers = r.Peers.ToArray(); r.Dirty = false; }
+            foreach (var p in peers) p.Socket.Abort();
+        }
+        if (Directory.Exists(RoomDir(id))) Directory.Delete(RoomDir(id), true);
+    }
+
     public BoardHub(string dataDir, string wwwDir = null)
     {
         _dir = dataDir;
@@ -226,6 +259,7 @@ public sealed class BoardHub : IDisposable
                 break;
             }
             case "who":
+                if (PeerName != null) break;
                 peer.Name = Clip((string)msg["name"], 40);
                 Broadcast(r, peer, $"{{\"t\":\"join\",\"peer\":{PeerJson(peer)}}}");
                 break;
@@ -273,7 +307,7 @@ public sealed class BoardHub : IDisposable
         {
             Socket = ws,
             Cid = Clip(q["cid"], 24),
-            Name = Clip(q["name"], 40),
+            Name = Clip(PeerName != null ? PeerName(ctx) : (string)q["name"], 40),
             Color = Clip(q["color"], 16),
         };
         if (peer.Cid.Length == 0) peer.Cid = Convert.ToHexString(RandomNumberGenerator.GetBytes(4));
@@ -374,7 +408,7 @@ public sealed class BoardHub : IDisposable
         app.MapGet("/", ctx => Asset(ctx, "index.html"));
         app.MapGet("/{file}", (HttpContext ctx, string file) => Asset(ctx, file));
 
-        app.MapGet("/api/info", () => Results.Json(new { app = "pleiada", version = 1 }));
+        app.MapGet("/api/info", () => Results.Json(new { app = "pleiada", version = 1, accounts = Authorize != null }));
 
         app.MapGet("/api/boards", (HttpContext ctx) =>
         {
@@ -399,19 +433,14 @@ public sealed class BoardHub : IDisposable
         {
             if (!IsAdmin(ctx)) return Results.StatusCode(403);
             if (!IdRx.IsMatch(room)) return Results.BadRequest();
-            if (_rooms.TryRemove(room, out var r))
-            {
-                Peer[] peers;
-                lock (r.Gate) { peers = r.Peers.ToArray(); r.Dirty = false; }
-                foreach (var p in peers) p.Socket.Abort();
-            }
-            if (Directory.Exists(RoomDir(room))) Directory.Delete(RoomDir(room), true);
+            Delete(room);
             return Results.Ok();
         });
 
         app.MapPost("/api/blob/{room}", async (HttpContext ctx, string room) =>
         {
             if (!IdRx.IsMatch(room)) return Results.BadRequest();
+            if (!Allowed(ctx, room)) return Results.StatusCode(403);
             if (ctx.Request.ContentLength > MaxBlob) return Results.StatusCode(413);
             var ext = Path.GetExtension((string)ctx.Request.Query["name"] ?? "").ToLowerInvariant();
             if (!Regex.IsMatch(ext, "^\\.[a-z0-9]{1,8}$")) ext = "";
@@ -438,10 +467,11 @@ public sealed class BoardHub : IDisposable
         app.MapGet("/blob/{room}/{file}", (HttpContext ctx, string room, string file) =>
         {
             if (!IdRx.IsMatch(room) || !BlobRx.IsMatch(file)) return Results.NotFound();
+            if (!Allowed(ctx, room)) return Results.StatusCode(403);
             var path = Path.Combine(RoomDir(room), "blobs", file);
             if (!File.Exists(path)) return Results.NotFound();
             var ext = Path.GetExtension(file);
-            ctx.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+            ctx.Response.Headers.CacheControl = (Authorize == null ? "public" : "private") + ", max-age=31536000, immutable";
             var mime = Mime.GetValueOrDefault(ext, "application/octet-stream");
             // Всё, кроме растровых картинок, отдаём только как вложение — чужой HTML/SVG не должен исполняться в нашем origin.
             if (InlineBlobs.Contains(ext)) return Results.File(path, mime);
@@ -454,6 +484,11 @@ public sealed class BoardHub : IDisposable
             if (!ctx.WebSockets.IsWebSocketRequest || !IdRx.IsMatch(room))
             {
                 ctx.Response.StatusCode = 400;
+                return;
+            }
+            if (!Allowed(ctx, room))
+            {
+                ctx.Response.StatusCode = 403;
                 return;
             }
             await RunPeer(ctx, room);
